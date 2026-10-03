@@ -687,19 +687,33 @@ pub fn parse_source(src: &[char]) -> Parsed {
     out
 }
 
-/// Distinct callees in one body. Name-only resolution: no type information, so
-/// `a.Bar()` lands on Bar and a shadowing local yields a false edge.
+/// Distinct callees in one body as `(dst, first line, hits)`. Name-only
+/// resolution: no type information, so `a.Bar()` lands on Bar and a shadowing
+/// local yields a false edge. The function's own name in its header is the
+/// declaration, not a call, so the first `self_name(` before the body opens is
+/// skipped - otherwise every `void Update()` calls every other `Update`.
 pub fn scan_calls(
     masked: &[char],
     lr: &[(usize, usize)],
     start: usize,
     end: usize,
     self_id: i64,
+    self_name: &str,
     by_name: &HashMap<String, Vec<i64>>,
-) -> Vec<(i64, usize)> {
-    let mut out = Vec::new();
-    let mut seen: HashSet<i64> = HashSet::new();
+) -> Vec<(i64, usize, i64)> {
+    let mut out: Vec<(i64, usize, i64)> = Vec::new();
+    let mut seen: HashMap<i64, usize> = HashMap::new();
     let hi = end.min(lr.len());
+    // Where the body opens: the first `{` or `=>` from the header on.
+    let body_at = if start == 0 || start > hi {
+        0
+    } else {
+        let (a, b) = (lr[start - 1].0, lr[hi - 1].1);
+        (a..b)
+            .find(|&i| masked[i] == '{' || (masked[i] == '=' && masked.get(i + 1) == Some(&'>')))
+            .unwrap_or(b)
+    };
+    let mut declared = false;
     for li in start..=hi {
         if li == 0 || li > lr.len() {
             continue;
@@ -707,7 +721,11 @@ pub fn scan_calls(
         let (a, b) = lr[li - 1];
         let mut sites = Vec::new();
         m::scan_calls(&masked[a..b], &mut sites);
-        for (name, _) in sites {
+        for (name, at) in sites {
+            if !declared && a + at < body_at && name == self_name {
+                declared = true;
+                continue;
+            }
             if call_keywords().contains(name.as_str()) {
                 continue;
             }
@@ -716,13 +734,14 @@ pub fn scan_calls(
                 None => continue,
             };
             for &dst in dsts {
-                if dst == self_id || seen.contains(&dst) {
+                if dst == self_id {
                     continue;
                 }
-                seen.insert(dst);
-                out.push((dst, li));
-                if out.len() >= MAX_CALLEES_PER_FN {
-                    return out;
+                if let Some(&k) = seen.get(&dst) {
+                    out[k].2 += 1;
+                } else if out.len() < MAX_CALLEES_PER_FN {
+                    seen.insert(dst, out.len());
+                    out.push((dst, li, 1));
                 }
             }
         }

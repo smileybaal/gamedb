@@ -470,8 +470,8 @@ pub fn index_root(
                     .push(r[1].as_i64());
             }
             let mut ins = db.prepare(
-                "INSERT INTO edges(src_id,dst_id,line,hits) VALUES (?,?,?,1) \
-                 ON CONFLICT(src_id,dst_id) DO UPDATE SET hits=hits+1",
+                "INSERT INTO edges(src_id,dst_id,line,hits) VALUES (?,?,?,?) \
+                 ON CONFLICT(src_id,dst_id) DO UPDATE SET hits=hits+excluded.hits",
             )?;
             // no BEGIN/COMMIT here: the outer transaction covers the whole pass
             for (rel, mt, file_id) in &queue {
@@ -482,21 +482,27 @@ pub fn index_root(
                 let masked = mask(&chars, true);
                 let lr = line_ranges(&masked);
                 let fns = db.query(
-                    "SELECT sym_id,start_line,end_line FROM functions \
+                    "SELECT sym_id,start_line,end_line,name FROM functions \
                      WHERE file_id=? AND sym_id IS NOT NULL",
                     &[Val::Int(*file_id)],
                 )?;
                 for fnrow in fns {
                     let sym = fnrow[0].as_i64();
-                    for (dst, li) in scan_calls(
+                    for (dst, li, hits) in scan_calls(
                         &masked,
                         &lr,
                         fnrow[1].as_i64() as usize,
                         fnrow[2].as_i64() as usize,
                         sym,
+                        fnrow[3].as_str(),
                         &by_name,
                     ) {
-                        ins.bind_all(&[Val::Int(sym), Val::Int(dst), Val::Int(li as i64)])?;
+                        ins.bind_all(&[
+                            Val::Int(sym),
+                            Val::Int(dst),
+                            Val::Int(li as i64),
+                            Val::Int(hits),
+                        ])?;
                         while ins.step()? {}
                         rep.edges += 1;
                     }

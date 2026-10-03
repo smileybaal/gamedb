@@ -475,13 +475,13 @@ pub fn run() -> i32 {
     by.insert("b".into(), vec![2]);
     by.insert("a".into(), vec![1]);
     by.insert("c".into(), vec![3]);
-    let e = scan_calls(&masked, &lr, 1, 5, 1, &by);
+    let e = scan_calls(&masked, &lr, 1, 5, 1, "a", &by);
     c.ok("calls: dedupe + self excluded", e.len() == 1 && e[0].0 == 2);
     c.ok(
         "calls: self-recursion excluded",
-        scan_calls(&masked, &lr, 1, 5, 2, &by)
+        scan_calls(&masked, &lr, 1, 5, 2, "a", &by)
             .iter()
-            .all(|(d, _)| *d != 2),
+            .all(|(d, _, _)| *d != 2),
     );
 
     // --- end-to-end, on a corpus with no game in it

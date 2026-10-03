@@ -454,3 +454,76 @@ fn a_record_compact_constructor_is_not_a_field() {
         p.syms
     );
 }
+
+/// Index `files` into a throwaway tree and return every edge as
+/// `(caller, callee, line, hits)`, sorted.
+fn edges_of(tag: &str, files: &[(&str, &str)]) -> Vec<(String, String, i64, i64)> {
+    let mut root = std::env::temp_dir();
+    root.push(format!("gamedb-audit-{}-{}", tag, std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (rel, body) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+    gamedb::store::index_root(&root, None, 0, false, false, "").expect("index");
+    let db = gamedb::db::open_existing(&root, None, true).expect("open");
+    let mut out: Vec<_> = db
+        .query(
+            "SELECT s.name, d.name, e.line, e.hits FROM edges e \
+             JOIN symbols s ON s.id = e.src_id JOIN symbols d ON d.id = e.dst_id",
+            &[],
+        )
+        .expect("query")
+        .into_iter()
+        .map(|r| {
+            (
+                r[0].as_str().to_string(),
+                r[1].as_str().to_string(),
+                r[2].as_i64(),
+                r[3].as_i64(),
+            )
+        })
+        .collect();
+    out.sort();
+    drop(db);
+    let _ = std::fs::remove_dir_all(&root);
+    out
+}
+
+#[test]
+fn a_definition_line_is_not_a_call_to_its_namesakes() {
+    let e = edges_of(
+        "defline",
+        &[
+            ("A.cs", "public class A\n{\n    private void Update()\n    {\n        Tick();\n    }\n}\n"),
+            ("B.cs", "public class B\n{\n    private void Update()\n    {\n        Tick();\n    }\n    private void Tick()\n    {\n    }\n}\n"),
+        ],
+    );
+    // Each `Update` calls `Tick` on line 5 and nothing else; neither
+    // `void Update()` header is a call to the other `Update`.
+    assert_eq!(
+        e,
+        vec![
+            ("Update".to_string(), "Tick".to_string(), 5, 1),
+            ("Update".to_string(), "Tick".to_string(), 5, 1),
+        ],
+        "{e:?}"
+    );
+}
+
+#[test]
+fn hits_counts_repeated_calls_and_line_is_the_first() {
+    let e = edges_of(
+        "hits",
+        &[(
+            "A.cs",
+            "public class A\n{\n    void Run()\n    {\n        Tick();\n        Tick();\n        Tick();\n    }\n    void Tick() { }\n}\n",
+        )],
+    );
+    assert_eq!(
+        e,
+        vec![("Run".to_string(), "Tick".to_string(), 5, 3)],
+        "{e:?}"
+    );
+}
