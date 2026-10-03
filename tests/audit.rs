@@ -454,3 +454,36 @@ fn a_record_compact_constructor_is_not_a_field() {
         p.syms
     );
 }
+
+#[test]
+fn a_constructor_initializer_on_its_own_line_keeps_the_constructor_name() {
+    // ILSpy puts `: base(...)` / `: this(...)` on the line after the header.
+    let src = concat!(
+        "public class CombFilter : Filter\n",
+        "{\n",
+        "\tpublic CombFilter(float delayLength, float gain)\n",
+        "\t\t: base(delayLength, gain)\n",
+        "\t{\n",
+        "\t}\n",
+        "\n",
+        "\tpublic CombFilter()\n",
+        "\t\t: this(1f, 0.5f)\n",
+        "\t{\n",
+        "\t\tReset();\n",
+        "\t}\n",
+        "}\n",
+    );
+    let p = parse_source(&chars(src));
+    let got: Vec<(&str, &str, usize, usize)> = p
+        .funcs
+        .iter()
+        .map(|f| (f.name.as_str(), f.params.as_str(), f.start, f.end))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("CombFilter", "float delayLength, float gain", 3, 6),
+            ("CombFilter", "", 8, 12),
+        ]
+    );
+}

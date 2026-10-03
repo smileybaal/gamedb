@@ -89,7 +89,22 @@ pub fn join_header(
     if !parens_balanced(&cand) {
         return None;
     }
-    let cand = strip_where_throws(&cand);
+    let mut cand = strip_where_throws(&cand);
+    // C# constructor initializer on its own line, as ILSpy writes it:
+    // `public Foo(int x)` / `: base(x)` / `{`. Fold it into the header so the
+    // name comes from `Foo(`, not from the `base(` on the following line.
+    if !matches!(cand.last(), Some('{' | '}' | ';')) {
+        if let Some(nx) =
+            (hdr_end + 1..lr.len()).find(|&k| !trim_line(&masked[lr[k].0..lr[k].1]).is_empty())
+        {
+            let init = trim_line(&masked[lr[nx].0..lr[nx].1]);
+            if is_ctor_initializer(init) {
+                cand.push(' ');
+                cand.extend(init.iter().copied());
+                hdr_end = nx;
+            }
+        }
+    }
     if cand.last() == Some(&'{') {
         return Some((cand, hdr_end));
     }
@@ -113,10 +128,21 @@ pub fn join_header(
     if nx >= lr.len() || trim_line(&masked[lr[nx].0..lr[nx].1]) != ['{'] {
         return None;
     }
-    let mut cand = cand;
     cand.push(' ');
     cand.push('{');
     Some((cand, nx))
+}
+
+/// `^:\s*(base|this)\s*\(` with balanced parentheses: a whole C# constructor
+/// initializer, optionally followed by the body's `{` on the same line.
+fn is_ctor_initializer(s: &[char]) -> bool {
+    if s.first() != Some(&':') {
+        return false;
+    }
+    let rest = trim_ws(&s[1..]);
+    let w = leading_ident(rest).unwrap_or_default();
+    let tail = trim_ws(&rest[w.len()..]);
+    (w == "base" || w == "this") && tail.first() == Some(&'(') && parens_balanced(tail)
 }
 
 fn not_a_func() -> &'static HashSet<&'static str> {
