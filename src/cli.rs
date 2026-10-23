@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 pub const USAGE: &str = concat!(
     "gamedb 1.0.0 - index decompiled source into SQLite (zero dependencies)\n",
     "  gamedb index    -r SRC [-v] [--dry-run] [--force]   incremental; -v N = progress every N\n",
+    "  gamedb index DATABASE.i64|PROJECT.gpr [--program NAME] [--output-dir DIR]\n",
+    "                     [--timeout SECONDS] [--mcp-command PROGRAM] [--ida-dir DIR]\n",
+    "                     [--ghidra-command PROGRAM]\n",
     "  gamedb search   -r SRC QUERY [--limit N]             function-name substring\n",
     "  gamedb strings  -r SRC QUERY [--limit N]             string-literal substring\n",
     "  gamedb read     -r SRC NAME [--path SUBSTR] [--out F] [--force]   function body, verbatim\n",
@@ -68,6 +71,12 @@ pub struct Args {
     pub rules: Option<String>,
     pub help: bool,
     pub version: bool,
+    pub output_dir: Option<String>,
+    pub timeout: Option<u64>,
+    pub mcp_command: Option<String>,
+    pub ida_dir: Option<String>,
+    pub ghidra_command: Option<String>,
+    pub program: Option<String>,
 }
 
 /// Accepts `--flag value` and `--flag=value`. Unknown flags are an error rather
@@ -119,6 +128,12 @@ pub fn parse(argv: Vec<String>) -> Result<Args, String> {
             match name.as_str() {
                 "-r" | "--root" => a.root = v,
                 "--db" => a.db = Some(v),
+                "--output-dir" => a.output_dir = Some(v),
+                "--mcp-command" => a.mcp_command = Some(v),
+                "--ida-dir" => a.ida_dir = Some(v),
+                "--ghidra-command" => a.ghidra_command = Some(v),
+                "--program" => a.program = Some(v),
+                "--timeout" => a.timeout = Some(parse_timeout(&v)?),
                 "-v" | "--verbose" => {
                     a.verbose = v
                         .parse()
@@ -155,6 +170,12 @@ pub fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--unverified" => a.unverified = true,
             "-r" | "--root" => a.root = take(&rest, &mut i, &name)?,
             "--db" => a.db = Some(take(&rest, &mut i, &name)?),
+            "--output-dir" => a.output_dir = Some(take(&rest, &mut i, &name)?),
+            "--mcp-command" => a.mcp_command = Some(take(&rest, &mut i, &name)?),
+            "--ida-dir" => a.ida_dir = Some(take(&rest, &mut i, &name)?),
+            "--ghidra-command" => a.ghidra_command = Some(take(&rest, &mut i, &name)?),
+            "--program" => a.program = Some(take(&rest, &mut i, &name)?),
+            "--timeout" => a.timeout = Some(parse_timeout(&take(&rest, &mut i, &name)?)?),
             "-v" | "--verbose" => {
                 let v = take(&rest, &mut i, &name)?;
                 a.verbose = v
@@ -191,6 +212,14 @@ pub fn parse(argv: Vec<String>) -> Result<Args, String> {
         i += 1;
     }
     Ok(a)
+}
+
+fn parse_timeout(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|v| *v > 0)
+        .ok_or_else(|| "--timeout needs a positive whole number of seconds".into())
 }
 
 fn take(rest: &[String], i: &mut usize, name: &str) -> Result<String, String> {
@@ -249,7 +278,27 @@ fn arr(items: Vec<String>) -> String {
     format!("[{}]", items.join(","))
 }
 
-pub fn run(a: Args) -> Result<i32, String> {
+pub fn run(mut a: Args) -> Result<i32, String> {
+    if a.cmd == "index" {
+        if a.pos.len() > 1 || (!a.pos.is_empty() && a.root != ".") {
+            return Err("index accepts one input: use either a positional path or --root".into());
+        }
+        if let Some(input) = a.pos.first() {
+            a.root = input.clone();
+        }
+        if Path::new(&a.root).is_file() {
+            return crate::export::run(&a);
+        }
+        if a.output_dir.is_some()
+            || a.program.is_some()
+            || a.mcp_command.is_some()
+            || a.ida_dir.is_some()
+            || a.ghidra_command.is_some()
+            || a.timeout.is_some()
+        {
+            return Err("export options require an .i64, .idb or .gpr database input".into());
+        }
+    }
     let root = PathBuf::from(&a.root);
     if a.cmd != "selftest" && !root.is_dir() {
         return Err(format!("no such directory: {}", a.root));

@@ -7,6 +7,8 @@
 
 pub mod cli;
 pub mod db;
+pub mod ida;
+pub mod export;
 pub mod modules;
 pub mod parse;
 pub mod rx;

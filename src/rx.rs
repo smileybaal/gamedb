@@ -125,9 +125,57 @@ fn tail(s: &[char], i: usize) -> Option<(String, String)> {
     Some((name, params))
 }
 
+fn match_pointer_return_header(s: &[char]) -> Option<(String, String)> {
+    let wrapper = s.iter().position(|&c| c == '(')?;
+    let prefix: String = s[..wrapper].iter().collect();
+    if prefix.trim().is_empty()
+        || !s[..wrapper]
+            .iter()
+            .all(|&c| is_word(c) || is_ws(c) || matches!(c, '*' | '&' | ':' | '<' | '>'))
+    {
+        return None;
+    }
+    let mut at = skip_ws(s, wrapper + 1);
+    loop {
+        match read_word(s, at) {
+            Some((word, end)) if is_modifier_tok(&word) => at = skip_ws(s, end),
+            _ => break,
+        }
+    }
+    if s.get(at) != Some(&'*') {
+        return None;
+    }
+    while s.get(at) == Some(&'*') {
+        at = skip_ws(s, at + 1);
+    }
+    let (name, end) = qualified_name(s, at)?;
+    let args = skip_ws(s, end);
+    if s.get(args) != Some(&'(') {
+        return None;
+    }
+    let (end, params) = close_paren(s, args)?;
+    let end = skip_ws(s, end + 1);
+    if s.get(end) != Some(&')') {
+        return None;
+    }
+    let returns = skip_ws(s, end + 1);
+    if s.get(returns) != Some(&'(') {
+        return None;
+    }
+    let (end, _) = close_paren(s, returns)?;
+    let end = skip_ws(s, end + 1);
+    if s.get(end) != Some(&'{') || !at_end(s, end + 1) {
+        return None;
+    }
+    Some((name, collapse_ws(&params)))
+}
+
 /// `HEADER`: optional `Type <*>* `, optional modifier words, then the tail,
 /// then an optional `/*...*/` comment.
 pub fn match_header(s: &[char]) -> Option<(String, String)> {
+    if let Some(found) = match_pointer_return_header(s) {
+        return Some(found);
+    }
     // ^\s*(?:WORD(?:\s*\*)*\s+(?:MOD\s+)*)?(WORD)\s*\(([^()]*)\)\s*(?:/\*.*)?\{\s*$
     let p = skip_ws(s, 0);
     // Storage and calling-class keywords may lead the whole declaration rather

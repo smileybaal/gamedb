@@ -7,7 +7,7 @@ description: Navigate a decompiled source tree (Ghidra/IDA C or C++, ILSpy/dnSpy
 
 `gamedb` parses a directory of brace-delimited source once into `<root>/.gamedb/index.sqlite`, then answers name, string, body, call-graph, and module questions from it. `gamedb --help` is the authoritative flag list; this skill holds what `--help` does not say.
 
-Every command takes `-r SRC` (default `.`). Pass the same `-r` (and `--db PATH`, if you used one) on every call: the index is found through them.
+Source-query commands take `-r SRC` (default `.`). Pass the same `-r` (and `--db PATH`, if you used one) on every call: the index is found through them.
 
 ## Start here
 
@@ -121,3 +121,11 @@ WHERE p.module = ? ORDER BY 1, 3;
 ```
 
 Prefer the subcommands for single lookups. Reach for `sql` when you need aggregates, joins across tables, or a filter the commands lack (by module, by symbol kind, by line range).
+
+## Index IDA or Ghidra databases
+
+Use the same `gamedb index` command for source directories and native analysis databases. For IDA, run `gamedb index /absolute/path/game.i64`; for Ghidra, run `gamedb index /absolute/path/project.gpr --program ExactProgramName`. Database paths also work with `-r`. Do not reimport a binary when an existing analysis database is available.
+
+IDA export uses official Hex-Rays MCP: `--mcp-command PROGRAM` (or `GAMEDB_IDA_MCP`) selects its executable, and `--ida-dir DIR` (or `IDADIR`) selects IDA. Ghidra export uses akiselev/ghidra-cli: select it with `--ghidra-command PROGRAM` or `GAMEDB_GHIDRA`. These external backends are optional; ordinary source indexing and queries do not need them.
+
+Indexing a database exports current pseudocode and refreshes SQLite. Subsequent queries use the generated source root, `<database-stem>-source/` for IDA or `<project-stem>-<program>-source/` for Ghidra, unless `--output-dir` overrides it. `.gamedb-export.json` records ownership and metadata. IDA reports failed decompilations and skipped imports; Ghidra's built-in exporter does not report per-function failures, so inspect export warnings. Rerun `index` after later analysis changes; there is no background synchronization.
