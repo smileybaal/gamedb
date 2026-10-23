@@ -15,6 +15,40 @@ gamedb graph -r C:\src Tick --direction callees
 runtime to host it in. Drop it on `PATH` (or keep it anywhere and call it by path) and it
 works on a machine that has never seen this repository.
 
+## Index source, IDA databases or Ghidra projects
+
+```sh
+gamedb index -r /analysis/exported-source
+gamedb index /analysis/game.i64 --ida-dir /opt/ida-pro-9.4
+gamedb index /analysis/game.gpr --program Game.exe
+```
+
+`index` detects the input: directories use the existing incremental source indexer; `.i64`/`.idb` files are exported through the official [Hex-Rays IDA MCP](https://github.com/HexRaysSA/ida-mcp); `.gpr` projects are exported through [akiselev/ghidra-cli](https://github.com/akiselev/ghidra-cli)'s built-in C exporter. Database paths work positionally or with `-r`. There is no separate synchronization command. Directory indexing still needs neither IDA nor Ghidra.
+
+Database indexing is orchestrated in Rust and invokes gamedb's Rust indexer directly, without starting another gamedb process. The embedded `ida_export.py` routine runs inside IDA through `execute_python`; the official MCP server and IDA still require their Python environment and a valid license. Ghidra uses its native C exporter through ghidra-cli, without an additional Python wrapper.
+
+For IDA, the default source root is `game-source/` beside `game.i64`. For Ghidra it is `game-Game.exe-source/`, including the selected program name with path separators replaced. `--output-dir DIR` overrides this directory. The index is `<source-root>/.gamedb/index.sqlite`, unless `--db PATH` overrides it. Pass the source root to subsequent `search`, `read`, `graph` and other source commands.
+
+Exports replace `decompiled.c` atomically and force a refresh of its index, so removed or renamed functions do not leave stale definitions. `.gamedb-export.json` records database/backend identity and export metadata; a directory is locked against simultaneous exports and cannot be reused for another database or Ghidra program. Existing `.ida-export.json` ownership manifests are recognized. IDA's manifest also includes function addresses/names, UTC timestamp, SHA-256, skipped external imports and per-function decompilation failures. Imports have no local bodies and are skipped. Partial IDA exports are reported; if no functions decompile, the previous export is preserved. Ghidra's built-in exporter does not expose a per-function failure count through this CLI, so `exported` and `failed` are `null` in its manifest; inspect its export warnings rather than treating an unknown count as zero.
+
+IDA requires IDA 9.4+ with Hex-Rays and the official `ida-mcp` server. `--mcp-command PROGRAM` overrides `GAMEDB_IDA_MCP`, otherwise `ida-mcp` is looked up on `PATH`. `--ida-dir DIR` overrides `IDADIR`, otherwise the server uses its configured installation. Ghidra requires `ghidra-cli` with `program export c` support, configured for the installed Ghidra distribution. `--ghidra-command PROGRAM` overrides `GAMEDB_GHIDRA`, otherwise the executable is `ghidra`. `--program NAME` is required for `.gpr` projects and prevents accidentally indexing a different program in a multi-program project. Do not open the same Ghidra project concurrently in another owner.
+
+`--timeout SECONDS` allows long exports (default 3600). `--json`, `--quiet`, `--rules`, `--db` and `--verbose` are supported. For database input, `--dry-run` prints the detected backend and destination without exporting or creating directories. Database integration requires SQLite JSON functions (SQLite 3.38+ or an older SQLite with JSON1) and adds no Cargo dependencies. Ordinary source commands retain their existing SQLite requirements. This command runs when invoked; it does not install a save hook or watcher. Run `index` again after completing analysis changes in either backend.
+
+The real IDA integration test compiles an original C program, exports it, renames a function in IDA, and verifies replacement in both the C export and SQLite:
+
+```sh
+GAMEDB_IDA_MCP=/path/to/venv/bin/ida-mcp IDADIR=/opt/ida-pro-9.4 cargo test real_ida_sync -- --ignored --nocapture
+```
+
+The Ghidra equivalent creates a temporary project, indexes it, renames a function, and checks that the export and SQLite replace the old name; it also checks ordinary directory indexing on the resulting source:
+
+```sh
+GAMEDB_GHIDRA=/path/to/ghidra cargo test real_ghidra_index -- --ignored --nocapture
+```
+
+These opt-in checks require their configured backend and `cc`; the normal test suite does not.
+
 ## Why it exists
 
 Decompiling something gives you a directory of `.c`, `.cpp`, `.java`, or `.cs` files.
